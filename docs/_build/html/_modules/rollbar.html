@@ -1,0 +1,771 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>rollbar &mdash; rollbar 0.5.0 documentation</title>
+    
+    <link rel="stylesheet" href="../_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.5.0',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <link rel="top" title="rollbar 0.5.0 documentation" href="../index.html" />
+    <link rel="up" title="Module code" href="index.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li><a href="../index.html">rollbar 0.5.0 documentation</a> &raquo;</li>
+          <li><a href="index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <h1>Source code for rollbar</h1><div class="highlight"><pre>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Plugin for Pyramid apps to submit errors to Rollbar</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">copy</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">socket</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+<span class="kn">import</span> <span class="nn">urlparse</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+
+<span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="c"># import request objects from various frameworks, if available</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">webob</span> <span class="kn">import</span> <span class="n">BaseRequest</span> <span class="k">as</span> <span class="n">WebobBaseRequest</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">WebobBaseRequest</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">django.http</span> <span class="kn">import</span> <span class="n">HttpRequest</span> <span class="k">as</span> <span class="n">DjangoHttpRequest</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">DjangoHttpRequest</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">werkzeug.wrappers</span> <span class="kn">import</span> <span class="n">Request</span> <span class="k">as</span> <span class="n">WerkzeugRequest</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">WerkzeugRequest</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">werkzeug.local</span> <span class="kn">import</span> <span class="n">LocalProxy</span> <span class="k">as</span> <span class="n">WerkzeugLocalProxy</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">WerkzeugLocalProxy</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">tornado.httpserver</span> <span class="kn">import</span> <span class="n">HTTPRequest</span> <span class="k">as</span> <span class="n">TornadoRequest</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">TornadoRequest</span> <span class="o">=</span> <span class="bp">None</span>
+    
+<span class="n">BASE_DATA_HOOK</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="n">log</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">()</span>
+
+<span class="n">agent_log</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="n">VERSION</span> <span class="o">=</span> <span class="s">&#39;0.5.0&#39;</span>
+<span class="n">DEFAULT_ENDPOINT</span> <span class="o">=</span> <span class="s">&#39;https://api.rollbar.com/api/1/&#39;</span>
+<span class="n">DEFAULT_TIMEOUT</span> <span class="o">=</span> <span class="mi">3</span>
+
+<span class="c"># configuration settings</span>
+<span class="c"># configure by calling init() or overriding directly</span>
+<span class="n">SETTINGS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;access_token&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+    <span class="s">&#39;environment&#39;</span><span class="p">:</span> <span class="s">&#39;production&#39;</span><span class="p">,</span>
+    <span class="s">&#39;root&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>  <span class="c"># root path to your code</span>
+    <span class="s">&#39;branch&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>  <span class="c"># git branch name</span>
+    <span class="s">&#39;handler&#39;</span><span class="p">:</span> <span class="s">&#39;thread&#39;</span><span class="p">,</span>  <span class="c"># &#39;blocking&#39;, &#39;thread&#39; or &#39;agent&#39;</span>
+    <span class="s">&#39;endpoint&#39;</span><span class="p">:</span> <span class="n">DEFAULT_ENDPOINT</span><span class="p">,</span>
+    <span class="s">&#39;timeout&#39;</span><span class="p">:</span> <span class="n">DEFAULT_TIMEOUT</span><span class="p">,</span>
+    <span class="s">&#39;agent.log_file&#39;</span><span class="p">:</span> <span class="s">&#39;log.rollbar&#39;</span><span class="p">,</span>
+    <span class="s">&#39;scrub_fields&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">&#39;passwd&#39;</span><span class="p">,</span> <span class="s">&#39;password&#39;</span><span class="p">,</span> <span class="s">&#39;secret&#39;</span><span class="p">,</span> <span class="s">&#39;confirm_password&#39;</span><span class="p">,</span> <span class="s">&#39;password_confirmation&#39;</span><span class="p">],</span>
+    <span class="s">&#39;notifier&#39;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s">&#39;name&#39;</span><span class="p">:</span> <span class="s">&#39;pyrollbar&#39;</span><span class="p">,</span>
+        <span class="s">&#39;version&#39;</span><span class="p">:</span> <span class="n">VERSION</span>
+    <span class="p">},</span>
+<span class="p">}</span>
+
+<span class="n">_initialized</span> <span class="o">=</span> <span class="bp">False</span>
+
+<span class="c">## public api</span>
+
+<div class="viewcode-block" id="init"><a class="viewcode-back" href="../index.html#rollbar.init">[docs]</a><span class="k">def</span> <span class="nf">init</span><span class="p">(</span><span class="n">access_token</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s">&#39;production&#39;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Saves configuration variables in this module&#39;s SETTINGS.</span>
+
+<span class="sd">    access_token: project access token. Get this from the Rollbar UI:</span>
+<span class="sd">                  - click &quot;Settings&quot; in the top nav</span>
+<span class="sd">                  - click &quot;Projects&quot; in the left nav</span>
+<span class="sd">                  - copy-paste the appropriate token.</span>
+<span class="sd">    environment: environment name. Can be any string; suggestions: &#39;production&#39;, &#39;development&#39;,</span>
+<span class="sd">                 &#39;staging&#39;, &#39;yourname&#39;</span>
+<span class="sd">    **kw: provided keyword arguments will override keys in SETTINGS.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">global</span> <span class="n">agent_log</span><span class="p">,</span> <span class="n">_initialized</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_initialized</span><span class="p">:</span>
+        <span class="n">_initialized</span> <span class="o">=</span> <span class="bp">True</span>
+
+        <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;access_token&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">access_token</span>
+        <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;environment&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">environment</span>
+        <span class="n">SETTINGS</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">kw</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">SETTINGS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;handler&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;agent&#39;</span><span class="p">:</span>
+            <span class="n">agent_log</span> <span class="o">=</span> <span class="n">_create_agent_log</span><span class="p">()</span>
+
+</div>
+<div class="viewcode-block" id="report_exc_info"><a class="viewcode-back" href="../index.html#rollbar.report_exc_info">[docs]</a><span class="k">def</span> <span class="nf">report_exc_info</span><span class="p">(</span><span class="n">exc_info</span><span class="p">,</span> <span class="n">request</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">extra_data</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">payload_data</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reports an exception to Rollbar, using exc_info (from calling sys.exc_info()) </span>
+<span class="sd">    </span>
+<span class="sd">    exc_info: the result of calling sys.exc_info()</span>
+<span class="sd">    request: optional, a WebOb or Werkzeug-based request object.</span>
+<span class="sd">    extra_data: optional, will be included in the &#39;custom&#39; section of the payload</span>
+<span class="sd">    payload_data: optional, dict that will override values in the final payload </span>
+<span class="sd">                  (e.g. &#39;level&#39; or &#39;fingerprint&#39;)</span>
+<span class="sd">    kw: provided for legacy purposes; will override arguments in `extra_data`</span>
+
+<span class="sd">    Example usage:</span>
+
+<span class="sd">    rollbar.init(access_token=&#39;YOUR_PROJECT_ACCESS_TOKEN&#39;)</span>
+<span class="sd">    try:</span>
+<span class="sd">        do_something()</span>
+<span class="sd">    except:</span>
+<span class="sd">        rollbar.report_exc_info(sys.exc_info(), request, {&#39;foo&#39;: &#39;bar&#39;}, {&#39;level&#39;: &#39;warning&#39;})</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_report_exc_info</span><span class="p">(</span><span class="n">exc_info</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">extra_data</span><span class="p">,</span> <span class="n">payload_data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s">&quot;Exception while reporting exc_info to Rollbar. </span><span class="si">%r</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+</div>
+<div class="viewcode-block" id="report_message"><a class="viewcode-back" href="../index.html#rollbar.report_message">[docs]</a><span class="k">def</span> <span class="nf">report_message</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="s">&#39;error&#39;</span><span class="p">,</span> <span class="n">request</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">extra_data</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">payload_data</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reports an arbitrary string message to Rollbar.</span>
+
+<span class="sd">    message: the string body of the message</span>
+<span class="sd">    level: level to report at. One of: &#39;critical&#39;, &#39;error&#39;, &#39;warning&#39;, &#39;info&#39;, &#39;debug&#39;</span>
+<span class="sd">    request: the request object for the context of the message</span>
+<span class="sd">    extra_data: dictionary of params to include with the message. &#39;body&#39; is reserved.</span>
+<span class="sd">    payload_data: param names to pass in the &#39;data&#39; level of the payload; overrides defaults.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_report_message</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">extra_data</span><span class="p">,</span> <span class="n">payload_data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s">&quot;Exception while reporting message to Rollbar. </span><span class="si">%r</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+</div>
+<div class="viewcode-block" id="send_payload"><a class="viewcode-back" href="../index.html#rollbar.send_payload">[docs]</a><span class="k">def</span> <span class="nf">send_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Sends a fully-formed payload (i.e. a string from json.dumps()).</span>
+<span class="sd">    Uses the configured handler from SETTINGS[&#39;handler&#39;]</span>
+
+<span class="sd">    Available handlers:</span>
+<span class="sd">    - &#39;blocking&#39;: calls _send_payload() (which makes an HTTP request) immediately, blocks on it</span>
+<span class="sd">    - &#39;thread&#39;: starts a single-use thread that will call _send_payload(). returns immediately.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">handler</span> <span class="o">=</span> <span class="n">SETTINGS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;handler&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">handler</span> <span class="o">==</span> <span class="s">&#39;blocking&#39;</span><span class="p">:</span>
+        <span class="n">_send_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">handler</span> <span class="o">==</span> <span class="s">&#39;agent&#39;</span><span class="p">:</span>
+        <span class="n">agent_log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c"># default to &#39;thread&#39;</span>
+        <span class="n">thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">_send_payload</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">payload</span><span class="p">,))</span>
+        <span class="n">thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+</div>
+<span class="k">def</span> <span class="nf">search_items</span><span class="p">(</span><span class="n">title</span><span class="p">,</span> <span class="n">return_fields</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">access_token</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="o">**</span><span class="n">search_fields</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Searches a project for items that match the input criteria.</span>
+
+<span class="sd">    title: all or part of the item&#39;s title to search for.</span>
+<span class="sd">    return_fields: the fields that should be returned for each item.</span>
+<span class="sd">            e.g. [&#39;id&#39;, &#39;project_id&#39;, &#39;status&#39;] will return a dict containing</span>
+<span class="sd">                 only those fields for each item.</span>
+<span class="sd">    access_token: a project access token. If this is not provided,</span>
+<span class="sd">                  the one provided to init() will be used instead.</span>
+<span class="sd">    search_fields: additional fields to include in the search.</span>
+<span class="sd">            currently supported: status, level, environment</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">title</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+
+    <span class="k">if</span> <span class="n">return_fields</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">return_fields</span> <span class="o">=</span> <span class="s">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">return_fields</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">_get_api</span><span class="p">(</span><span class="s">&#39;search/&#39;</span><span class="p">,</span>
+                    <span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">,</span>
+                    <span class="n">fields</span><span class="o">=</span><span class="n">return_fields</span><span class="p">,</span>
+                    <span class="n">access_token</span><span class="o">=</span><span class="n">access_token</span><span class="p">,</span>
+                    <span class="o">**</span><span class="n">search_fields</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">ApiException</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    This exception will be raised if there was a problem decoding the</span>
+<span class="sd">    response from an API call.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">ApiError</span><span class="p">(</span><span class="n">ApiException</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    This exception will be raised if the API response contains an &#39;err&#39;</span>
+<span class="sd">    field, denoting there was a problem fulfilling the api request.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">Result</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    This class encapsulates the response from an API call.</span>
+<span class="sd">    Usage:</span>
+
+<span class="sd">        result = search_items(title=&#39;foo&#39;, fields=[&#39;id&#39;])</span>
+<span class="sd">        print result.data</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">access_token</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">access_token</span> <span class="o">=</span> <span class="n">access_token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">params</span> <span class="o">=</span> <span class="n">params</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+    <span class="k">def</span> <span class="nf">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">PagedResult</span><span class="p">(</span><span class="n">Result</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    This class wraps the response from an API call that responded with</span>
+<span class="sd">    a page of results.</span>
+<span class="sd">    Usage:</span>
+
+<span class="sd">        result = search_items(title=&#39;foo&#39;, fields=[&#39;id&#39;])</span>
+<span class="sd">        print &#39;First page: %d, data: %s&#39; % (result.page, result.data)</span>
+<span class="sd">        result = result.next_page()</span>
+<span class="sd">        print &#39;Second page: %d, data: %s&#39; % (result.page, result.data)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">access_token</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">page_num</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">PagedResult</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">access_token</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">page</span> <span class="o">=</span> <span class="n">page_num</span>
+
+    <span class="k">def</span> <span class="nf">next_page</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">)</span>
+        <span class="n">params</span><span class="p">[</span><span class="s">&#39;page&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">page</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">_get_api</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="o">**</span><span class="n">params</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">prev_page</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">page</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">)</span>
+        <span class="n">params</span><span class="p">[</span><span class="s">&#39;page&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">page</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">_get_api</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="o">**</span><span class="n">params</span><span class="p">)</span>
+
+
+<span class="c">## internal functions</span>
+
+    
+<span class="k">def</span> <span class="nf">_create_agent_log</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Creates .rollbar log file for use with rollbar-agent</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">log_file</span> <span class="o">=</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;agent.log_file&#39;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">log_file</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.rollbar&#39;</span><span class="p">):</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&quot;Provided agent log file does not end with .rollbar, which it must. &quot;</span>
+            <span class="s">&quot;Using default instead.&quot;</span><span class="p">)</span>
+        <span class="n">log_file</span> <span class="o">=</span> <span class="n">DEFAULTS</span><span class="p">[</span><span class="s">&#39;agent.log_file&#39;</span><span class="p">]</span>
+    
+    <span class="n">retval</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s">&#39;rollbar_agent&#39;</span><span class="p">)</span>
+    <span class="n">handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="n">log_file</span><span class="p">,</span> <span class="s">&#39;a&#39;</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+    <span class="n">formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%(message)s</span><span class="s">&#39;</span><span class="p">)</span>
+    <span class="n">handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
+    <span class="n">retval</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
+    <span class="n">retval</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">retval</span>
+
+
+<span class="k">def</span> <span class="nf">_report_exc_info</span><span class="p">(</span><span class="n">exc_info</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">extra_data</span><span class="p">,</span> <span class="n">payload_data</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Called by report_exc_info() wrapper</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_check_config</span><span class="p">():</span>
+        <span class="k">return</span>
+
+    <span class="n">data</span> <span class="o">=</span> <span class="n">_build_base_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="c"># exception info</span>
+    <span class="n">cls</span><span class="p">,</span> <span class="n">exc</span><span class="p">,</span> <span class="n">trace</span> <span class="o">=</span> <span class="n">exc_info</span>
+    <span class="c"># most recent call last</span>
+    <span class="n">raw_frames</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">extract_tb</span><span class="p">(</span><span class="n">trace</span><span class="p">)</span>
+    <span class="n">frames</span> <span class="o">=</span> <span class="p">[{</span><span class="s">&#39;filename&#39;</span><span class="p">:</span> <span class="n">f</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="s">&#39;lineno&#39;</span><span class="p">:</span> <span class="n">f</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="s">&#39;method&#39;</span><span class="p">:</span> <span class="n">f</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="s">&#39;code&#39;</span><span class="p">:</span> <span class="n">f</span><span class="p">[</span><span class="mi">3</span><span class="p">]}</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">raw_frames</span><span class="p">]</span>
+    <span class="n">data</span><span class="p">[</span><span class="s">&#39;body&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;trace&#39;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s">&#39;frames&#39;</span><span class="p">:</span> <span class="n">frames</span><span class="p">,</span>
+            <span class="s">&#39;exception&#39;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s">&#39;class&#39;</span><span class="p">:</span> <span class="n">cls</span><span class="o">.</span><span class="n">__name__</span><span class="p">,</span>
+                <span class="s">&#39;message&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">),</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">extra_data</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">extra_data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="n">data</span><span class="p">[</span><span class="s">&#39;custom&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">extra_data</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s">&#39;custom&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;value&#39;</span><span class="p">:</span> <span class="n">extra_data</span><span class="p">}</span>
+
+    <span class="n">_add_request_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+    <span class="n">_add_person_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+    <span class="n">data</span><span class="p">[</span><span class="s">&#39;server&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_build_server_data</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="n">payload_data</span><span class="p">:</span>
+        <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">payload_data</span><span class="p">)</span>
+
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">_build_payload</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="n">send_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">data</span><span class="p">[</span><span class="s">&#39;uuid&#39;</span><span class="p">]</span>
+
+
+<span class="k">def</span> <span class="nf">_report_message</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">extra_data</span><span class="p">,</span> <span class="n">payload_data</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Called by report_message() wrapper</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_check_config</span><span class="p">():</span>
+        <span class="k">return</span>
+
+    <span class="n">data</span> <span class="o">=</span> <span class="n">_build_base_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+    <span class="n">data</span><span class="p">[</span><span class="s">&#39;level&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">level</span>
+
+    <span class="c"># message</span>
+    <span class="n">data</span><span class="p">[</span><span class="s">&#39;body&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;message&#39;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s">&#39;body&#39;</span><span class="p">:</span> <span class="n">message</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">extra_data</span><span class="p">:</span>
+        <span class="n">data</span><span class="p">[</span><span class="s">&#39;body&#39;</span><span class="p">][</span><span class="s">&#39;message&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">extra_data</span><span class="p">)</span>
+
+    <span class="n">_add_request_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+    <span class="n">_add_person_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+    <span class="n">data</span><span class="p">[</span><span class="s">&#39;server&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_build_server_data</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">payload_data</span><span class="p">:</span>
+        <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">payload_data</span><span class="p">)</span>
+
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">_build_payload</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="n">send_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">data</span><span class="p">[</span><span class="s">&#39;uuid&#39;</span><span class="p">]</span>
+
+
+<span class="k">def</span> <span class="nf">_check_config</span><span class="p">():</span>
+    <span class="c"># make sure we have an access_token</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">SETTINGS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;access_token&#39;</span><span class="p">):</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&quot;pyrollbar: No access_token provided. Please configure by calling rollbar.init() with your access token.&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">False</span>
+    <span class="k">return</span> <span class="bp">True</span>
+
+
+<span class="k">def</span> <span class="nf">_build_base_data</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="s">&#39;error&#39;</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;timestamp&#39;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()),</span>
+        <span class="s">&#39;environment&#39;</span><span class="p">:</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;environment&#39;</span><span class="p">],</span>
+        <span class="s">&#39;level&#39;</span><span class="p">:</span> <span class="n">level</span><span class="p">,</span>
+        <span class="s">&#39;language&#39;</span><span class="p">:</span> <span class="s">&#39;python&#39;</span><span class="p">,</span>
+        <span class="s">&#39;notifier&#39;</span><span class="p">:</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;notifier&#39;</span><span class="p">],</span>
+        <span class="s">&#39;uuid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+    <span class="p">}</span>
+    
+    <span class="k">if</span> <span class="n">BASE_DATA_HOOK</span><span class="p">:</span>
+        <span class="n">BASE_DATA_HOOK</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">data</span>
+
+
+<span class="k">def</span> <span class="nf">_add_person_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">person_data</span> <span class="o">=</span> <span class="n">_build_person_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s">&quot;Exception while building person data for Rollbar paylooad: </span><span class="si">%r</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">person_data</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s">&#39;person&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">person_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_person_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a dictionary describing the logged-in user using data from `request.</span>
+
+<span class="sd">    Try request.rollbar_person first, then &#39;user&#39;, then &#39;user_id&#39;</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s">&#39;rollbar_person&#39;</span><span class="p">):</span>
+        <span class="n">rollbar_person_prop</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">rollbar_person</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">person</span> <span class="o">=</span> <span class="n">rollbar_person_prop</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="n">person</span> <span class="o">=</span> <span class="n">rollbar_person_prop</span>
+
+        <span class="k">if</span> <span class="n">person</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">person</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">person</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s">&#39;user&#39;</span><span class="p">):</span>
+        <span class="n">user_prop</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">user</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">user</span> <span class="o">=</span> <span class="n">user_prop</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="n">user</span> <span class="o">=</span> <span class="n">user_prop</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">user</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">user</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">retval</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="s">&#39;id&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">):</span>
+                <span class="n">retval</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="s">&#39;user_id&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">):</span>
+                <span class="n">retval</span><span class="p">[</span><span class="s">&#39;id&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">user_id</span><span class="p">)</span>
+
+            <span class="c"># id is required, so only include username/email if we have an id</span>
+            <span class="k">if</span> <span class="n">retval</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;id&#39;</span><span class="p">):</span>
+                <span class="n">retval</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+                    <span class="s">&#39;username&#39;</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="s">&#39;username&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">),</span>
+                    <span class="s">&#39;email&#39;</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="s">&#39;email&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+                <span class="p">})</span>
+            <span class="k">return</span> <span class="n">retval</span>
+
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s">&#39;user_id&#39;</span><span class="p">):</span>
+        <span class="n">user_id_prop</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">user_id</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">user_id</span> <span class="o">=</span> <span class="n">user_id_prop</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">TypeError</span><span class="p">:</span>
+            <span class="n">user_id</span> <span class="o">=</span> <span class="n">user_id_prop</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">user_id</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s">&#39;id&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">user_id</span><span class="p">)}</span>
+    
+
+<span class="k">def</span> <span class="nf">_add_request_data</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Attempts to build request data; if successful, sets the &#39;request&#39; key on `data`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">request_data</span> <span class="o">=</span> <span class="n">_build_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="n">request_data</span> <span class="o">=</span> <span class="n">_scrub_request_data</span><span class="p">(</span><span class="n">request_data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s">&quot;Exception while building request_data for Rollbar payload: </span><span class="si">%r</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">request_data</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s">&#39;request&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a dictionary containing data from the request.</span>
+<span class="sd">    Can handle webob or werkzeug-based request objects.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c"># webob (pyramid)</span>
+    <span class="k">if</span> <span class="n">WebobBaseRequest</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">WebobBaseRequest</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_build_webob_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="c"># django</span>
+    <span class="k">if</span> <span class="n">DjangoHttpRequest</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">DjangoHttpRequest</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_build_django_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="c"># werkzeug (flask)</span>
+    <span class="k">if</span> <span class="n">WerkzeugRequest</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">WerkzeugRequest</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_build_werkzeug_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">WerkzeugLocalProxy</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">WerkzeugLocalProxy</span><span class="p">):</span>
+        <span class="n">actual_request</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">_get_current_object</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">_build_werkzeug_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="c"># tornado</span>
+    <span class="k">if</span> <span class="n">TornadoRequest</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">TornadoRequest</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">_build_tornado_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="bp">None</span>
+
+
+<span class="k">def</span> <span class="nf">_scrub_request_data</span><span class="p">(</span><span class="n">request_data</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Scrubs out sensitive information out of request data</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">request_data</span> <span class="ow">and</span> <span class="n">request_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;POST&#39;</span><span class="p">):</span>
+        <span class="n">request_data</span><span class="p">[</span><span class="s">&#39;POST&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_scrub_request_params</span><span class="p">(</span><span class="n">request_data</span><span class="p">[</span><span class="s">&#39;POST&#39;</span><span class="p">])</span>
+    
+    <span class="k">return</span> <span class="n">request_data</span>
+
+    
+<span class="k">def</span> <span class="nf">_scrub_request_params</span><span class="p">(</span><span class="n">params</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Given request.POST/request.GET, returns a dict with passwords scrubbed out</span>
+<span class="sd">    (replaced with astrickses)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">scrub_fields</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;scrub_fields&#39;</span><span class="p">])</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
+    
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">k</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">in</span> <span class="n">scrub_fields</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="n">params</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;*&#39;</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">v</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">params</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="s">&#39;*&#39;</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">params</span>
+
+
+<span class="k">def</span> <span class="nf">_build_webob_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">request_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;url&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">url</span><span class="p">,</span>
+        <span class="s">&#39;GET&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">GET</span><span class="p">),</span>
+        <span class="s">&#39;user_ip&#39;</span><span class="p">:</span> <span class="n">_extract_user_ip</span><span class="p">(</span><span class="n">request</span><span class="p">),</span>
+        <span class="s">&#39;headers&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">),</span>
+    <span class="p">}</span>
+
+    <span class="c"># pyramid matchdict</span>
+    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s">&#39;matchdict&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">):</span>
+        <span class="n">request_data</span><span class="p">[</span><span class="s">&#39;params&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">matchdict</span>
+
+    <span class="c"># workaround for webob bug when the request body contains binary data but has a text</span>
+    <span class="c"># content-type</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">request_data</span><span class="p">[</span><span class="s">&#39;POST&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">UnicodeDecodeError</span><span class="p">:</span>
+        <span class="n">request_data</span><span class="p">[</span><span class="s">&#39;body&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span>
+
+    <span class="k">return</span> <span class="n">request_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_django_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">request_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;url&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">build_absolute_uri</span><span class="p">(),</span>
+        <span class="s">&#39;method&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">,</span>
+        <span class="s">&#39;GET&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">GET</span><span class="p">),</span>
+        <span class="s">&#39;POST&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">),</span>
+        <span class="s">&#39;user_ip&#39;</span><span class="p">:</span> <span class="n">_django_extract_user_ip</span><span class="p">(</span><span class="n">request</span><span class="p">),</span>
+    <span class="p">}</span>
+
+    <span class="c"># headers</span>
+    <span class="n">headers</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">k</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;HTTP_&#39;</span><span class="p">):</span>
+            <span class="n">header_name</span> <span class="o">=</span> <span class="s">&#39;-&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">k</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s">&#39;HTTP_&#39;</span><span class="p">):]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s">&#39;_&#39;</span><span class="p">,</span> <span class="s">&#39; &#39;</span><span class="p">)</span><span class="o">.</span><span class="n">title</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">))</span>
+            <span class="n">headers</span><span class="p">[</span><span class="n">header_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+    <span class="n">request_data</span><span class="p">[</span><span class="s">&#39;headers&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">headers</span>
+
+    <span class="k">return</span> <span class="n">request_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_werkzeug_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">request_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;url&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">url</span><span class="p">,</span>
+        <span class="s">&#39;GET&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">args</span><span class="p">),</span>
+        <span class="s">&#39;POST&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">form</span><span class="p">),</span>
+        <span class="s">&#39;user_ip&#39;</span><span class="p">:</span> <span class="n">_extract_user_ip</span><span class="p">(</span><span class="n">request</span><span class="p">),</span>
+        <span class="s">&#39;headers&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">),</span>
+        <span class="s">&#39;method&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">,</span>
+        <span class="s">&#39;files_keys&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">files</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span>
+    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">request_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_tornado_request_data</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">request_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;url&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">full_url</span><span class="p">(),</span>
+        <span class="s">&#39;user_ip&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">remote_ip</span><span class="p">,</span>
+        <span class="s">&#39;headers&#39;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">),</span>
+        <span class="s">&#39;method&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">,</span>
+        <span class="s">&#39;files_keys&#39;</span><span class="p">:</span> <span class="n">request</span><span class="o">.</span><span class="n">files</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span>
+    <span class="p">}</span>
+    <span class="n">request_data</span><span class="p">[</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">arguments</span>
+
+    <span class="k">return</span> <span class="n">request_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_server_data</span><span class="p">():</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns a dictionary containing information about the server environment.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c"># server environment</span>
+    <span class="n">server_data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;host&#39;</span><span class="p">:</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">(),</span>
+    <span class="p">}</span>
+
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">[</span><span class="s">&#39;branch&#39;</span><span class="p">,</span> <span class="s">&#39;root&#39;</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">SETTINGS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+            <span class="n">server_data</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">server_data</span>
+
+
+<span class="k">def</span> <span class="nf">_build_payload</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Returns the full payload as a string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;access_token&#39;</span><span class="p">:</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;access_token&#39;</span><span class="p">],</span>
+        <span class="s">&#39;data&#39;</span><span class="p">:</span> <span class="n">data</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">ErrorIgnoringJSONEncoder</span><span class="p">()</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_send_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_post_api</span><span class="p">(</span><span class="s">&#39;item/&#39;</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_post_api</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="n">urlparse</span><span class="o">.</span><span class="n">urljoin</span><span class="p">(</span><span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;endpoint&#39;</span><span class="p">],</span> <span class="n">path</span><span class="p">)</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">payload</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">SETTINGS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;timeout&#39;</span><span class="p">,</span> <span class="n">DEFAULT_TIMEOUT</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">_parse_response</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;access_token&#39;</span><span class="p">],</span> <span class="n">payload</span><span class="p">,</span> <span class="n">resp</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_get_api</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">access_token</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="o">**</span><span class="n">params</span><span class="p">):</span>
+    <span class="n">access_token</span> <span class="o">=</span> <span class="n">access_token</span> <span class="ow">or</span> <span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;access_token&#39;</span><span class="p">]</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="n">urlparse</span><span class="o">.</span><span class="n">urljoin</span><span class="p">(</span><span class="n">SETTINGS</span><span class="p">[</span><span class="s">&#39;endpoint&#39;</span><span class="p">],</span> <span class="n">path</span><span class="p">)</span>
+    <span class="n">params</span><span class="p">[</span><span class="s">&#39;access_token&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">access_token</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_parse_response</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">access_token</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">resp</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_parse_response</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">access_token</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">resp</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">429</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&quot;Rollbar: over rate limit, data was dropped. Payload was: </span><span class="si">%r</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+        <span class="k">return</span>
+    <span class="k">elif</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">!=</span> <span class="mi">200</span><span class="p">:</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&quot;Got unexpected status code from Rollbar api: </span><span class="si">%s</span><span class="se">\n</span><span class="s">Response:</span><span class="se">\n</span><span class="si">%s</span><span class="s">&quot;</span><span class="p">,</span>
+            <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span><span class="p">,</span> <span class="n">resp</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+
+    <span class="n">data</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">text</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">json_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>
+        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;Could not decode Rollbar api response:</span><span class="se">\n</span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">ApiException</span><span class="p">(</span><span class="s">&#39;Request to </span><span class="si">%s</span><span class="s"> returned invalid JSON response&#39;</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">json_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;err&#39;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">ApiError</span><span class="p">(</span><span class="n">json_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;message&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="s">&#39;Unknown error&#39;</span><span class="p">)</span>
+
+        <span class="n">result</span> <span class="o">=</span> <span class="n">json_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;result&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="s">&#39;page&#39;</span> <span class="ow">in</span> <span class="n">result</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">PagedResult</span><span class="p">(</span><span class="n">access_token</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">result</span><span class="p">[</span><span class="s">&#39;page&#39;</span><span class="p">],</span> <span class="n">params</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">Result</span><span class="p">(</span><span class="n">access_token</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">params</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">_extract_user_ip</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="c"># some common things passed by load balancers... will need more of these.</span>
+    <span class="n">real_ip</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;X-Real-Ip&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">real_ip</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">real_ip</span>
+    <span class="n">forwarded_for</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;X-Forwarded-For&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">forwarded_for</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">forwarded_for</span>
+    <span class="k">return</span> <span class="n">request</span><span class="o">.</span><span class="n">remote_addr</span>
+
+
+<span class="k">def</span> <span class="nf">_django_extract_user_ip</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">forwarded_for</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;HTTP_X_FORWARDED_FOR&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">forwarded_for</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">forwarded_for</span>
+    <span class="n">real_ip</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;HTTP_X_REAL_IP&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">real_ip</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">real_ip</span>
+    <span class="k">return</span> <span class="n">request</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s">&#39;REMOTE_ADDR&#39;</span><span class="p">]</span>
+
+
+<span class="k">class</span> <span class="nc">ErrorIgnoringJSONEncoder</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">JSONEncoder</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">):</span>
+        <span class="n">kw</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s">&#39;skipkeys&#39;</span><span class="p">,</span> <span class="bp">True</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ErrorIgnoringJSONEncoder</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kw</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">repr</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="k">return</span> <span class="s">&quot;&lt;Unencodable object&gt;&quot;</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li><a href="../index.html">rollbar 0.5.0 documentation</a> &raquo;</li>
+          <li><a href="index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2013, Rollbar, Inc..
+      Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.1.3.
+    </div>
+  </body>
+</html>

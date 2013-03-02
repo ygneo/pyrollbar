@@ -1,0 +1,270 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>rollbar &mdash; rollbar 0.5.0 documentation</title>
+    
+    <link rel="stylesheet" href="_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '',
+        VERSION:     '0.5.0',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <link rel="top" title="rollbar 0.5.0 documentation" href="index.html" />
+    <link rel="prev" title="Welcome to rollbar’s documentation!" href="index.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="index.html" title="Welcome to rollbar’s documentation!"
+             accesskey="P">previous</a> |</li>
+        <li><a href="index.html">rollbar 0.5.0 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <div class="section" id="rollbar">
+<h1>rollbar<a class="headerlink" href="#rollbar" title="Permalink to this headline">¶</a></h1>
+<p>rollbar is a generic library for reporting exceptions and other messages to <a class="reference external" href="http://rollbar.com/">Rollbar</a>:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="kn">import</span> <span class="nn">rollbar</span><span class="o">,</span> <span class="nn">sys</span>
+<span class="n">rollbar</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="s">&#39;YOUR_ACCESS_TOKEN&#39;</span><span class="p">,</span> <span class="s">&#39;production&#39;</span><span class="p">)</span>  <span class="c"># access_token, environment</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">main_app_loop</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">IOError</span><span class="p">:</span>
+    <span class="n">rollbar</span><span class="o">.</span><span class="n">report_message</span><span class="p">(</span><span class="s">&#39;Got an IOError in the main loop&#39;</span><span class="p">,</span> <span class="s">&#39;warning&#39;</span><span class="p">)</span>
+<span class="k">except</span><span class="p">:</span>
+    <span class="c"># catch-all</span>
+    <span class="n">rollbar</span><span class="o">.</span><span class="n">report_exc_info</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="section" id="requirements">
+<h2>Requirements<a class="headerlink" href="#requirements" title="Permalink to this headline">¶</a></h2>
+<p>pyrollbar requires:</p>
+<ul class="simple">
+<li>Python 2.6 or 2.7</li>
+<li>requests 0.12+</li>
+<li>a Rollbar account</li>
+</ul>
+</div>
+<div class="section" id="installation">
+<h2>Installation<a class="headerlink" href="#installation" title="Permalink to this headline">¶</a></h2>
+<p>Install using pip:</p>
+<div class="highlight-python"><pre>pip install rollbar</pre>
+</div>
+</div>
+<div class="section" id="configuration">
+<h2>Configuration<a class="headerlink" href="#configuration" title="Permalink to this headline">¶</a></h2>
+<p><strong>For generic Python or a non-Django/non-Pyramid framework, follow these instructions:</strong></p>
+<p>Somewhere in your initialization code, call rollbar.init() with your access_token:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">rollbar</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="s">&#39;YOUR_ACCESS_TOKEN_HERE&#39;</span><span class="p">,</span> <span class="n">environment</span><span class="o">=</span><span class="s">&#39;production&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Other options can be passed as keyword arguments. See the reference below for all options.</p>
+<p><strong>If you are integrating with Django, follow these instructions:</strong></p>
+<ol class="arabic">
+<li><p class="first">In your <tt class="docutils literal"><span class="pre">settings.py</span></tt>, add <tt class="docutils literal"><span class="pre">'rollbar.contrib.django.middleware.RollbarNotifierMiddleware'</span></tt> as the last item in <tt class="docutils literal"><span class="pre">MIDDLEWARE_CLASSES</span></tt>:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">MIDDLEWARE_CLASSES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="c"># ... other middleware classes ...</span>
+    <span class="s">&#39;rollbar.contrib.django.middleware.RollbarNotifierMiddleware&#39;</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</li>
+<li><p class="first">Add these configuration variables in <tt class="docutils literal"><span class="pre">settings.py</span></tt>:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">ROLLBAR</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;access_token&#39;</span><span class="p">:</span> <span class="s">&#39;YOUR_ACCESS_TOKEN_HERE&#39;</span><span class="p">,</span>
+    <span class="s">&#39;environment&#39;</span><span class="p">:</span> <span class="s">&#39;development&#39;</span> <span class="k">if</span> <span class="n">DEBUG</span> <span class="k">else</span> <span class="s">&#39;production&#39;</span><span class="p">,</span>
+    <span class="s">&#39;branch&#39;</span><span class="p">:</span> <span class="s">&#39;master&#39;</span><span class="p">,</span>
+    <span class="s">&#39;root&#39;</span><span class="p">:</span> <span class="s">&#39;/absolute/path/to/code/root&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+</ol>
+<p><strong>If you are integrating with Pyramid, follow these instructions:</strong></p>
+<ol class="arabic">
+<li><p class="first">In your <tt class="docutils literal"><span class="pre">ini</span></tt> file (e.g. <tt class="docutils literal"><span class="pre">production.ini</span></tt>), add <tt class="docutils literal"><span class="pre">rollbar.contrib.pyramid</span></tt> to the end of your <tt class="docutils literal"><span class="pre">pyramid.includes</span></tt>:</p>
+<div class="highlight-python"><pre>[app:main]
+pyramid.includes =
+    pyramid_debugtoolbar
+    rollbar.contrib.pyramid</pre>
+</div>
+</li>
+<li><p class="first">Add these rollbar configuration variables:</p>
+<div class="highlight-python"><pre>[app:main]
+rollbar.access_token = YOUR_ACCESS_TOKEN_HERE
+rollbar.environment = production
+rollbar.branch = master
+rollbar.root = %(here)s</pre>
+</div>
+</li>
+</ol>
+<p>The above will configure rollbar to catch and report all exceptions that occur in your Pyramid app. However, if there are any middleware
+applications that wrap your app, Rollbar will not be able to catch exceptions.</p>
+<p>In order to catch exceptions from Pyramid and middleware code, you will need to create a <tt class="docutils literal"><span class="pre">pipeline</span></tt> where the rollbar middleware wraps your Pyramid app.</p>
+<ul>
+<li><p class="first">Change your <tt class="docutils literal"><span class="pre">ini</span></tt> file to use a <tt class="docutils literal"><span class="pre">pipeline</span></tt>:</p>
+<div class="highlight-python"><pre>From
+
+[app:main]
+...
+
+To
+
+[pipeline:main]
+pipeline =
+    rollbar
+    YOUR_APP_NAME
+
+[app:YOUR_APP_NAME]
+pyramid.includes =
+    pyramid_debugtoolbar
+    rollbar.contrib.pyramid
+
+[filter:rollbar]
+access_token = YOUR_ACCESS_TOKEN_HERE
+environment = production
+branch = master
+root = %(here)s</pre>
+</div>
+</li>
+</ul>
+<p>Unfortunately, the rollbar tween and the rollbar filter configurations contains duplicated information. We&#8217;ll look into fixing this in future versions.</p>
+</div>
+<div class="section" id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>The Django and Pyramid integration will automatically report uncaught exceptions to Rollbar.</p>
+<p>Call <tt class="docutils literal"><span class="pre">rollbar.report_exc_info()</span></tt> to report an exception, or <tt class="docutils literal"><span class="pre">rollbar.report_message()</span></tt> to report an arbitrary string message. See the docstrings for more info.</p>
+</div>
+<div class="section" id="configuration-reference">
+<h2>Configuration reference<a class="headerlink" href="#configuration-reference" title="Permalink to this headline">¶</a></h2>
+<dl class="docutils">
+<dt>access_token</dt>
+<dd>Access token from your Rollbar project</dd>
+<dt>handler</dt>
+<dd><p class="first">One of:</p>
+<ul class="simple">
+<li>blocking &#8211; runs in main thread</li>
+<li>thread &#8211; spawns a new thread</li>
+<li>agent &#8211; writes messages to a log file for consumption by rollbar-agent</li>
+</ul>
+<p class="last"><strong>default:</strong> <tt class="docutils literal"><span class="pre">thread</span></tt></p>
+</dd>
+<dt>environment</dt>
+<dd>Environment name. Any string up to 255 chars is OK. For best results, use &#8220;production&#8221; for your production environment.</dd>
+<dt>root</dt>
+<dd>Absolute path to the root of your application, not including the final <tt class="docutils literal"><span class="pre">/</span></tt>.</dd>
+<dt>branch</dt>
+<dd><p class="first">Name of the checked-out branch.</p>
+<p class="last"><strong>default:</strong> <tt class="docutils literal"><span class="pre">master</span></tt></p>
+</dd>
+<dt>agent.log_file</dt>
+<dd>If <tt class="docutils literal"><span class="pre">handler</span></tt> is <tt class="docutils literal"><span class="pre">agent</span></tt>, the path to the log file. Filename must end in <tt class="docutils literal"><span class="pre">.rollbar</span></tt></dd>
+<dt>endpoint</dt>
+<dd><p class="first">URL items are posted to.</p>
+<p class="last"><strong>default:</strong> <tt class="docutils literal"><span class="pre">https://api.rollbar.com/api/1/item/</span></tt></p>
+</dd>
+<dt>scrub_fields</dt>
+<dd><p class="first">List of field names to scrub out of POST. Values will be replaced with astrickses. If overridiing, make sure to list all fields you want to scrub, not just fields you want to add to the default. Param names are converted to lowercase before comparing against the scrub list.</p>
+<p class="last"><strong>default</strong> <tt class="docutils literal"><span class="pre">['passwd',</span> <span class="pre">'password',</span> <span class="pre">'secret',</span> <span class="pre">'confirm_password',</span> <span class="pre">'password_confirmation']</span></tt></p>
+</dd>
+</dl>
+</div>
+<div class="section" id="developer-resources">
+<h2>Developer Resources<a class="headerlink" href="#developer-resources" title="Permalink to this headline">¶</a></h2>
+<p>Get in touch! We&#8217;d love to hear what you think and we&#8217;re happy to help.</p>
+<ul class="simple">
+<li>Email us: <tt class="docutils literal"><span class="pre">support&#64;rollbar.com</span></tt></li>
+<li>IRC: <tt class="docutils literal"><span class="pre">#rollbar.com</span></tt> on <tt class="docutils literal"><span class="pre">irc.freenode.net</span></tt></li>
+<li>Want to contribute? Send a pull request at <a class="reference external" href="https://github.com/rollbar/pyrollbar">https://github.com/rollbar/pyrollbar</a></li>
+</ul>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">rollbar</a><ul>
+<li><a class="reference internal" href="#requirements">Requirements</a></li>
+<li><a class="reference internal" href="#installation">Installation</a></li>
+<li><a class="reference internal" href="#configuration">Configuration</a></li>
+<li><a class="reference internal" href="#usage">Usage</a></li>
+<li><a class="reference internal" href="#configuration-reference">Configuration reference</a></li>
+<li><a class="reference internal" href="#developer-resources">Developer Resources</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="index.html"
+                        title="previous chapter">Welcome to rollbar&#8217;s documentation!</a></p>
+  <h3>This Page</h3>
+  <ul class="this-page-menu">
+    <li><a href="_sources/README.txt"
+           rel="nofollow">Show Source</a></li>
+  </ul>
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="index.html" title="Welcome to rollbar’s documentation!"
+             >previous</a> |</li>
+        <li><a href="index.html">rollbar 0.5.0 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2013, Rollbar, Inc..
+      Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.1.3.
+    </div>
+  </body>
+</html>

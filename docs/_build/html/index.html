@@ -1,0 +1,235 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Welcome to rollbar’s documentation! &mdash; rollbar 0.5.0 documentation</title>
+    
+    <link rel="stylesheet" href="_static/default.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '',
+        VERSION:     '0.5.0',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <link rel="top" title="rollbar 0.5.0 documentation" href="#" />
+    <link rel="next" title="rollbar" href="README.html" /> 
+  </head>
+  <body>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="README.html" title="rollbar"
+             accesskey="N">next</a> |</li>
+        <li><a href="#">rollbar 0.5.0 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body">
+            
+  <div class="section" id="welcome-to-rollbar-s-documentation">
+<h1>Welcome to rollbar&#8217;s documentation!<a class="headerlink" href="#welcome-to-rollbar-s-documentation" title="Permalink to this headline">¶</a></h1>
+<p>Contents:</p>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="README.html">rollbar</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="README.html#requirements">Requirements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="README.html#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="README.html#configuration">Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="README.html#usage">Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="README.html#configuration-reference">Configuration reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="README.html#developer-resources">Developer Resources</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<dl class="function">
+<dt id="rollbar.init">
+<tt class="descclassname">rollbar.</tt><tt class="descname">init</tt><big>(</big><em>access_token</em>, <em>environment='production'</em>, <em>**kw</em><big>)</big><a class="reference internal" href="_modules/rollbar.html#init"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#rollbar.init" title="Permalink to this definition">¶</a></dt>
+<dd><p>Saves configuration variables in this module&#8217;s <tt class="docutils literal"><span class="pre">SETTINGS</span></tt> and initializes any resources.
+Should only be called once; calls after the first call have no effect.</p>
+<dl class="docutils">
+<dt>Parameters:</dt>
+<dd><ul class="first last">
+<li><dl class="first docutils">
+<dt><tt class="docutils literal"><span class="pre">access_token</span></tt>: the project access token. Get this from the Rollbar UI: </dt>
+<dd><ol class="first last arabic simple">
+<li>click &#8220;Settings&#8221; in the top nav</li>
+<li>click &#8220;Projects&#8221; in the left nav</li>
+<li>copy-paste the appropriate token (probably the post_server_item token).</li>
+</ol>
+</dd>
+</dl>
+</li>
+<li><p class="first"><tt class="docutils literal"><span class="pre">environment</span></tt>: environment name. Can be any string; suggestions: &#8216;production&#8217;, 
+&#8216;development&#8217;, &#8216;staging&#8217;, &#8216;yourname&#8217;</p>
+</li>
+<li><p class="first"><tt class="docutils literal"><span class="pre">**kw</span></tt>: additional configuration; provided keyword arguments will override keys in 
+<tt class="docutils literal"><span class="pre">SETTINGS</span></tt></p>
+</li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="function">
+<dt id="rollbar.report_exc_info">
+<tt class="descclassname">rollbar.</tt><tt class="descname">report_exc_info</tt><big>(</big><em>exc_info</em>, <em>request=None</em>, <em>extra_data=None</em>, <em>payload_data=None</em>, <em>**kw</em><big>)</big><a class="reference internal" href="_modules/rollbar.html#report_exc_info"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#rollbar.report_exc_info" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reports an exception to Rollbar, using exc_info (from calling sys.exc_info())</p>
+<dl class="docutils">
+<dt>Parameters:</dt>
+<dd><ul class="first last">
+<li><p class="first"><tt class="docutils literal"><span class="pre">exc_info</span></tt>: the result of calling sys.exc_info()</p>
+</li>
+<li><p class="first"><tt class="docutils literal"><span class="pre">request</span></tt>: optional, a WebOb or Werkzeug-based request object.</p>
+</li>
+<li><p class="first"><tt class="docutils literal"><span class="pre">extra_data</span></tt>: optional, will be included in the &#8216;custom&#8217; section of the payload</p>
+</li>
+<li><dl class="first docutils">
+<dt><tt class="docutils literal"><span class="pre">payload_data</span></tt>: optional, dict that will override values in the final payload </dt>
+<dd><p class="first last">(e.g. &#8216;level&#8217; or &#8216;fingerprint&#8217;)</p>
+</dd>
+</dl>
+</li>
+<li><p class="first"><tt class="docutils literal"><span class="pre">**kw</span></tt>: provided for legacy purposes; will override arguments in <cite>extra_data</cite></p>
+</li>
+</ul>
+</dd>
+</dl>
+<p>Example usage:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="k">try</span><span class="p">:</span>
+    <span class="n">do_something</span><span class="p">()</span>
+<span class="k">except</span><span class="p">:</span>
+    <span class="n">rollbar</span><span class="o">.</span><span class="n">report_exc_info</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">(),</span> <span class="n">request</span><span class="p">,</span> <span class="p">{</span><span class="s">&#39;foo&#39;</span><span class="p">:</span> <span class="s">&#39;bar&#39;</span><span class="p">},</span> <span class="p">{</span><span class="s">&#39;level&#39;</span><span class="p">:</span> <span class="s">&#39;warning&#39;</span><span class="p">})</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="function">
+<dt id="rollbar.report_message">
+<tt class="descclassname">rollbar.</tt><tt class="descname">report_message</tt><big>(</big><em>message</em>, <em>level='error'</em>, <em>request=None</em>, <em>extra_data=None</em>, <em>payload_data=None</em><big>)</big><a class="reference internal" href="_modules/rollbar.html#report_message"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#rollbar.report_message" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reports an arbitrary string message to Rollbar.</p>
+<dl class="docutils">
+<dt>Parameters:</dt>
+<dd><ul class="first last simple">
+<li><tt class="docutils literal"><span class="pre">message</span></tt>: the string body of the message</li>
+<li><tt class="docutils literal"><span class="pre">level</span></tt>: level to report at. One of: &#8216;critical&#8217;, &#8216;error&#8217;, &#8216;warning&#8217;, &#8216;info&#8217;, &#8216;debug&#8217;</li>
+<li><tt class="docutils literal"><span class="pre">request</span></tt>: the request object for the context of the message</li>
+<li><tt class="docutils literal"><span class="pre">extra_data</span></tt>: dictionary of params to include with the message. &#8216;body&#8217; is reserved.</li>
+<li><tt class="docutils literal"><span class="pre">payload_data</span></tt>: param names to pass in the &#8216;data&#8217; level of the payload; overrides defaults.</li>
+</ul>
+</dd>
+</dl>
+<p>Example usage:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">rollbar</span><span class="o">.</span><span class="n">report_message</span><span class="p">(</span><span class="s">&#39;Could not get user data from Facebook API&#39;</span><span class="p">,</span> <span class="s">&#39;warning&#39;</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">extra_data</span><span class="o">=</span><span class="p">{</span><span class="s">&#39;user_id&#39;</span><span class="p">:</span> <span class="mi">12345</span><span class="p">})</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="function">
+<dt id="rollbar.send_payload">
+<tt class="descclassname">rollbar.</tt><tt class="descname">send_payload</tt><big>(</big><em>payload</em><big>)</big><a class="reference internal" href="_modules/rollbar.html#send_payload"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#rollbar.send_payload" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sends a fully-formed payload (i.e. a string from json.dumps()).
+Uses the configured handler from SETTINGS[&#8216;handler&#8217;]</p>
+<dl class="docutils">
+<dt>Available handlers:</dt>
+<dd><ul class="first last simple">
+<li><tt class="docutils literal"><span class="pre">'blocking'</span></tt>: calls _send_payload() (which makes an HTTP request) immediately, blocks on it</li>
+<li><tt class="docutils literal"><span class="pre">'thread'</span></tt>: starts a single-use thread that will call _send_payload(). returns immediately.</li>
+</ul>
+</dd>
+<dt>Parameters:</dt>
+<dd><ul class="first last simple">
+<li><tt class="docutils literal"><span class="pre">payload</span></tt>: a json-encoded payload ready to be sent to the Rollbar /item API.</li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</div>
+<div class="section" id="indices-and-tables">
+<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Permalink to this headline">¶</a></h1>
+<ul class="simple">
+<li><a class="reference internal" href="genindex.html"><em>Index</em></a></li>
+<li><a class="reference internal" href="py-modindex.html"><em>Module Index</em></a></li>
+<li><a class="reference internal" href="search.html"><em>Search Page</em></a></li>
+</ul>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="#">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">Welcome to rollbar&#8217;s documentation!</a><ul>
+</ul>
+</li>
+<li><a class="reference internal" href="#indices-and-tables">Indices and tables</a></li>
+</ul>
+
+  <h4>Next topic</h4>
+  <p class="topless"><a href="README.html"
+                        title="next chapter">rollbar</a></p>
+  <h3>This Page</h3>
+  <ul class="this-page-menu">
+    <li><a href="_sources/index.txt"
+           rel="nofollow">Show Source</a></li>
+  </ul>
+<div id="searchbox" style="display: none">
+  <h3>Quick search</h3>
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="README.html" title="rollbar"
+             >next</a> |</li>
+        <li><a href="#">rollbar 0.5.0 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer">
+        &copy; Copyright 2013, Rollbar, Inc..
+      Created using <a href="http://sphinx.pocoo.org/">Sphinx</a> 1.1.3.
+    </div>
+  </body>
+</html>

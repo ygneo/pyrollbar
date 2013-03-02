@@ -83,10 +83,8 @@ def init(access_token, environment='production', **kw):
           1. click "Settings" in the top nav
           2. click "Projects" in the left nav
           3. copy-paste the appropriate token (probably the post_server_item token).
-      - ``environment``: environment name. Can be any string; suggestions: 'production', 
-        'development', 'staging', 'yourname'
-      - ``**kw``: additional configuration; provided keyword arguments will override keys in 
-        ``SETTINGS``
+      - ``environment``: environment name. Can be any string; suggestions: 'production', 'development', 'staging', 'yourname'
+      - ``**kw``: additional configuration; provided keyword arguments will override keys in ``SETTINGS``
     """
     global agent_log, _initialized
 
@@ -105,22 +103,20 @@ def report_exc_info(exc_info, request=None, extra_data=None, payload_data=None, 
     """
     Reports an exception to Rollbar, using exc_info (from calling sys.exc_info()) 
     
-    Parameters:
-      - ``exc_info``: the result of calling sys.exc_info()
-      - ``request``: optional, a WebOb or Werkzeug-based request object.
-      - ``extra_data``: optional, will be included in the 'custom' section of the payload
-      - ``payload_data``: optional, dict that will override values in the final payload 
+    exc_info: the result of calling sys.exc_info()
+    request: optional, a WebOb or Werkzeug-based request object.
+    extra_data: optional, will be included in the 'custom' section of the payload
+    payload_data: optional, dict that will override values in the final payload 
                   (e.g. 'level' or 'fingerprint')
-      - ``**kw``: provided for legacy purposes; will override arguments in `extra_data`
+    kw: provided for legacy purposes; will override arguments in `extra_data`
 
     Example usage:
 
-    .. code-block:: python
-        
-        try:
-            do_something()
-        except:
-            rollbar.report_exc_info(sys.exc_info(), request, {'foo': 'bar'}, {'level': 'warning'})
+    rollbar.init(access_token='YOUR_PROJECT_ACCESS_TOKEN')
+    try:
+        do_something()
+    except:
+        rollbar.report_exc_info(sys.exc_info(), request, {'foo': 'bar'}, {'level': 'warning'})
     """
     try:
         return _report_exc_info(exc_info, request, extra_data, payload_data)
@@ -132,19 +128,11 @@ def report_message(message, level='error', request=None, extra_data=None, payloa
     """
     Reports an arbitrary string message to Rollbar.
 
-    Parameters:
-      - ``message``: the string body of the message
-      - ``level``: level to report at. One of: 'critical', 'error', 'warning', 'info', 'debug'
-      - ``request``: the request object for the context of the message
-      - ``extra_data``: dictionary of params to include with the message. 'body' is reserved.
-      - ``payload_data``: param names to pass in the 'data' level of the payload; overrides defaults.
-
-    Example usage:
-
-    .. code-block:: python
-
-        rollbar.report_message('Could not get user data from Facebook API', 'warning', request, extra_data={'user_id': 12345})
-
+    message: the string body of the message
+    level: level to report at. One of: 'critical', 'error', 'warning', 'info', 'debug'
+    request: the request object for the context of the message
+    extra_data: dictionary of params to include with the message. 'body' is reserved.
+    payload_data: param names to pass in the 'data' level of the payload; overrides defaults.
     """
     try:
         _report_message(message, level, request, extra_data, payload_data)
@@ -158,11 +146,8 @@ def send_payload(payload):
     Uses the configured handler from SETTINGS['handler']
 
     Available handlers:
-      - ``'blocking'``: calls _send_payload() (which makes an HTTP request) immediately, blocks on it
-      - ``'thread'``: starts a single-use thread that will call _send_payload(). returns immediately.
-
-    Parameters:
-      - ``payload``: a json-encoded payload ready to be sent to the Rollbar /item API.
+    - 'blocking': calls _send_payload() (which makes an HTTP request) immediately, blocks on it
+    - 'thread': starts a single-use thread that will call _send_payload(). returns immediately.
     """
     handler = SETTINGS.get('handler')
     if handler == 'blocking':
