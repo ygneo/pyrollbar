@@ -488,7 +488,7 @@ def _report_exc_info(exc_info, request, extra_data, payload_data, level=None):
             'frames': frames,
             'exception': {
                 'class': cls.__name__,
-                'message': str(exc),
+                'message': _to_str(exc),
             }
         }
     }
