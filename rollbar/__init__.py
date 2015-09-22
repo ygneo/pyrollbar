@@ -961,7 +961,7 @@ def _build_django_request_data(request):
         'url': request.build_absolute_uri(),
         'method': request.method,
         'GET': dict(request.GET),
-        'POST': dict(request.POST),
+        'POST': dict(request.POST) or dict(request.DATA),
         'user_ip': _wsgi_extract_user_ip(request.environ),
     }
 
